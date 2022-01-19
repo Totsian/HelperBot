@@ -1,22 +1,23 @@
-import sqlite3
 from aiogram import Bot, Dispatcher, executor, types
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters import Text
 from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from config import TOKEN
-
-API_TOKEN = TOKEN
+from database import add_user_db, select_idea, insert_idea, delete_idea_db, \
+    select_film, insert_film, delete_film_db, \
+    select_todo, insert_todo, delete_todo_db, \
+    select_contact, select_num_name, insert_contact, delete_contact_db, \
+    select_link, insert_link, delete_link_db, \
+    select_book, select_book_name, insert_book, delete_book_db
 
 bot = Bot(
-    token=API_TOKEN,
+    token=TOKEN,
     parse_mode=types.ParseMode.HTML,
 )
 
 storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
-conn = sqlite3.connect('helper.db')
-c = conn.cursor()
 
 
 class Form(StatesGroup):
@@ -44,16 +45,7 @@ def read_txt(filename):
 
 
 def add_user(user_id: int, username: str, first_name: str, last_name: str):
-    c.execute('''SELECT user_id FROM user_inf''')
-    user_list = []
-    for i in c.fetchall():
-        user_list += list(i)
-    if user_id not in user_list:
-        c.execute('''INSERT INTO user_inf(user_id, username, first_name, last_name) VALUES(?,?,?,?)''',
-                  (user_id, username, first_name, last_name))
-        conn.commit()
-    else:
-        print('Уже зарегистрирован.')
+    add_user_db(user_id, username, first_name, last_name)
 
 
 @dp.message_handler(commands=['start'])
@@ -88,7 +80,7 @@ def get_keyboard_idea():
     return keyboard
 
 
-# если на вход приъодит команда /idea, срабатывет данный блок кода
+# если на вход приходит команда /idea, срабатывет данный блок кода
 @dp.message_handler(commands=['idea'])
 async def idea_m(message: types.Message):
     await message.answer(
@@ -97,11 +89,12 @@ async def idea_m(message: types.Message):
     )
 
 
-# функция, которая вытаскивает данные из базы данных и в случае, если что-то записано, выводит данные,
-# если не записано - приходит сообщение 'Пока не записана ни одна идея.'
+# функция, которая вытаскивает данные из базы данных
+# т.к. приходит список, элементами которого являются кортежи, то можно просмотреть длину списка,
+# если длина списка равно 0, значит в базе ничего не записано, если отличное от нуля,
+# преобразуем каждый кортеж в список и добавляем в строку, которая потом выводится в сообщении
 async def set_idea(message: types.Message, user_id: int):
-    c.execute('''SELECT user_idea FROM ideas WHERE user_id=?''', (user_id,))
-    ideas = c.fetchall()
+    ideas = select_idea(user_id)
     if len(ideas) == 0:
         await message.answer('Пока не записана ни одна идея.')
     else:
@@ -110,14 +103,13 @@ async def set_idea(message: types.Message, user_id: int):
         ideas_in_str = ''
         for i in ideas:
             ideas_list += list(i)
-
         for i in ideas_list:
             ideas_in_str += str(n) + '. ' + i + '\n'
             n += 1
         await message.answer('<b>Список идей:</b>\n' + ideas_in_str)
 
 
-# функция, которая записывает сообщение пользователя в базу данных
+# функция, которая записывает сообщение пользователя в базу данных (используется машина состояний)
 @dp.message_handler(state=Form.new_idea)
 async def get_idea(message: types.Message, state: FSMContext):
     async with state.proxy() as data:
@@ -126,14 +118,13 @@ async def get_idea(message: types.Message, state: FSMContext):
         user_id = user_idea.id
         user_date = message.date
         idea_n = data['new_idea']
-        c.execute('''INSERT INTO ideas VALUES(?,?,?)''', (user_id, user_date, idea_n))
-        conn.commit()
+        insert_idea(user_id, user_date, idea_n)
         await message.reply('Идея записана!')
     await state.finish()
 
 
-# функция лоя удаления записи по её порядковому номеру
-# польщователь может просмотреть спикос записей и ввести номера записей, которые он хочет удалить
+# функция для удаления записи по её порядковому номеру
+# пользователь может просмотреть список записей и ввести номера записей, которые он хочет удалить
 @dp.message_handler(state=Form.del_idea)
 async def delete_idea(message: types.Message, state: FSMContext):
     async with state.proxy() as data:
@@ -143,8 +134,7 @@ async def delete_idea(message: types.Message, state: FSMContext):
         num = num.replace(' ', '')
         new_num = num.split(',')
         list_num = []
-        c.execute('''SELECT user_idea FROM ideas WHERE user_id=?''', (user_id,))
-        ideas = c.fetchall()
+        ideas = select_idea(user_id)
         len_id = len(ideas)
         for i in new_num:
             if i.isdigit() and int(i) <= len_id:
@@ -155,8 +145,7 @@ async def delete_idea(message: types.Message, state: FSMContext):
         else:
             for k in list_num:
                 key = ideas[k - 1]
-                c.execute('''DELETE FROM ideas WHERE user_idea=?''', key)
-                conn.commit()
+                delete_idea_db(key)
             await message.reply('Успешно удалено!')
     await state.finish()
 
@@ -205,8 +194,7 @@ async def film(message: types.Message):
 
 
 async def set_film(message: types.Message, user_id: int):
-    c.execute('''SELECT film FROM films WHERE user_id=?''', (user_id,))
-    films = c.fetchall()
+    films = select_film(user_id)
     if len(films) == 0:
         await message.edit_text('Пока не записан ни один фильм.')
     else:
@@ -229,16 +217,14 @@ async def get_film(message: types.Message, state: FSMContext):
         user_id = user_film.id
         user_date = message.date
         film_n = data['new_film']
-        c.execute('''SELECT film FROM films WHERE user_id=?''', (user_id,))
-        contacts = c.fetchall()
+        films = select_film(user_id)
         film_list = []
-        for i in contacts:
+        for i in films:
             film_list += list(i)
         if film_n in film_list:
             await message.reply('Такой фильм уже записан.')
         else:
-            c.execute('''INSERT INTO films VALUES(?,?,?)''', (user_id, user_date, film_n))
-            conn.commit()
+            insert_film(user_id, user_date, film_n)
             await message.answer('Фильм записан!')
     await state.finish()
 
@@ -252,8 +238,7 @@ async def delete_film(message: types.Message, state: FSMContext):
         num = num.replace(' ', '')
         new_num = num.split(',')
         list_num = []
-        c.execute('''SELECT film FROM films WHERE user_id=?''', (user_id,))
-        films = c.fetchall()
+        films = select_film(user_id)
         len_f = len(films)
         for i in new_num:
             if i.isdigit() and int(i) <= len_f:
@@ -264,8 +249,7 @@ async def delete_film(message: types.Message, state: FSMContext):
         else:
             for k in list_num:
                 key = films[k - 1]
-                c.execute('''DELETE FROM films WHERE film=?''', key)
-                conn.commit()
+                delete_film_db(key)
             await message.reply('Успешно удалено!')
     await state.finish()
 
@@ -313,8 +297,7 @@ async def to_do(message: types.Message):
 
 
 async def set_to_do(message: types.Message, user_id: int):
-    c.execute('''SELECT to_do FROM to_do_list WHERE user_id=?''', (user_id,))
-    todo = c.fetchall()
+    todo = select_todo(user_id)
     if len(todo) == 0:
         await message.answer('Пока ничего не записано')
     else:
@@ -342,10 +325,9 @@ async def get_to_do(message: types.Message, state: FSMContext):
             text += t
             if t == '\n':
                 new_todo = text.replace('\n', '')
-                c.execute('''INSERT INTO to_do_list VALUES(?,?,?)''', (user_id, user_date, new_todo))
-                conn.commit()
+                insert_todo(user_id, user_date, new_todo)
                 text = ''
-        c.execute('''INSERT INTO to_do_list VALUES(?,?,?)''', (user_id, user_date, text))
+        insert_todo(user_id, user_date, text)
         await message.reply('Список обновлен!')
     await state.finish()
 
@@ -359,8 +341,7 @@ async def delete_todo(message: types.Message, state: FSMContext):
         num = num.replace(' ', '')
         new_num = num.split(',')
         list_num = []
-        c.execute('''SELECT to_do FROM to_do_list WHERE user_id=?''', (user_id,))
-        todos = c.fetchall()
+        todos = select_todo(user_id)
         len_t = len(todos)
         for i in new_num:
             if i.isdigit() and int(i) <= len_t:
@@ -371,8 +352,7 @@ async def delete_todo(message: types.Message, state: FSMContext):
         else:
             for k in list_num:
                 key = todos[k - 1]
-                c.execute('''DELETE FROM to_do_list WHERE to_do=?''', key)
-                conn.commit()
+                delete_todo_db(key)
             await message.reply('Успешно удалено!')
     await state.finish()
 
@@ -397,10 +377,8 @@ async def callback_todo(call: types.CallbackQuery, state: FSMContext):
         current_state = await state.get_state()
         if current_state is None:
             return
-
         await state.finish()
         await call.message.answer('Изменения прерваны.')
-
     await call.answer()
 
 
@@ -425,10 +403,9 @@ async def contact(message: types.Message):
 
 
 async def set_contact(message: types.Message, user_id: int):
-    c.execute('''SELECT contact_name, number FROM contacts WHERE user_id=?''', (user_id,))
-    cont = c.fetchall()
+    cont = select_num_name(user_id)
     if len(cont) == 0:
-        await message.answer('Пока не записана ни одна идея.')
+        await message.answer('Нет записей контактов.')
     else:
         n = 1
         contact_str = ''
@@ -464,8 +441,7 @@ async def get_contact(message: types.Message, state: FSMContext):
         contact_name = cont_n[:p]
         contact_number = cont_n[p + 1:]
         cont_num_form = number(contact_number)
-        c.execute('''SELECT number FROM contacts WHERE user_id=?''', (user_id,))
-        contacts = c.fetchall()
+        contacts = select_contact(user_id)
         cont_list = []
         for i in contacts:
             cont_list += list(i)
@@ -475,8 +451,7 @@ async def get_contact(message: types.Message, state: FSMContext):
             if len(contact_number) - 1 > 12:
                 await message.reply('Номер введен неверно.')
             else:
-                c.execute('''INSERT INTO contacts VALUES(?,?,?,?)''', (user_id, contact_name, cont_num_form, user_date))
-                conn.commit()
+                insert_contact(user_id, contact_name, cont_num_form, user_date)
         await message.answer('Контакт записан!')
     await state.finish()
 
@@ -490,8 +465,7 @@ async def delete_contact(message: types.Message, state: FSMContext):
         num = num.replace(' ', '')
         new_num = num.split(',')
         list_num = []
-        c.execute('''SELECT number FROM contacts WHERE user_id=?''', (user_id,))
-        contacts = c.fetchall()
+        contacts = select_contact(user_id)
         len_t = len(contacts)
         for i in new_num:
             if i.isdigit() and int(i) <= len_t:
@@ -502,8 +476,7 @@ async def delete_contact(message: types.Message, state: FSMContext):
         else:
             for k in list_num:
                 key = contacts[k - 1]
-                c.execute('''DELETE FROM contacts WHERE number=?''', key)
-                conn.commit()
+                delete_contact_db(key)
             await message.reply('Успешно удалено!')
     await state.finish()
 
@@ -554,10 +527,9 @@ async def link(message: types.Message):
 
 
 async def set_link(message: types.Message, user_id: int):
-    c.execute('''SELECT link FROM links WHERE user_id=?''', (user_id,))
-    links = c.fetchall()
+    links = select_link(user_id)
     if len(links) == 0:
-        await message.answer('Пока не записана ни одна идея.')
+        await message.answer('Пока ничего не записано.')
     else:
         n = 1
         links_list = []
@@ -578,8 +550,7 @@ async def get_link(message: types.Message, state: FSMContext):
         user_id = user_film.id
         user_date = message.date
         link_n = data['new_link']
-        c.execute('''INSERT INTO links VALUES(?,?,?)''', (user_id, user_date, link_n))
-        conn.commit()
+        insert_link(user_id, user_date, link_n)
         await message.answer('Ссылка записана!')
     await state.finish()
 
@@ -594,8 +565,7 @@ async def delete_link(message: types.Message, state: FSMContext):
         new_num = num.split(',')
         print(new_num)
         list_num = []
-        c.execute('''SELECT link FROM links WHERE user_id=?''', (user_id,))
-        links = c.fetchall()
+        links = select_link(user_id)
         len_l = len(links)
         for i in new_num:
             if i.isdigit() and int(i) <= len_l:
@@ -606,8 +576,7 @@ async def delete_link(message: types.Message, state: FSMContext):
         else:
             for k in list_num:
                 key = links[k - 1]
-                c.execute('''DELETE FROM links WHERE link=?''', key)
-                conn.commit()
+                delete_link_db(key)
             await message.reply('Успешно удалено!')
     await state.finish()
 
@@ -655,8 +624,7 @@ async def book(message: types.Message):
 
 
 async def set_book(message: types.Message, user_id: int):
-    c.execute('''SELECT book_name, author FROM books WHERE user_id=?''', (user_id,))
-    books = c.fetchall()
+    books = select_book(user_id)
     if len(books) == 0:
         await message.answer('Пока ничего не записано')
     else:
@@ -685,16 +653,14 @@ async def get_book(message: types.Message, state: FSMContext):
             t = book_n.find('\n')
             book_name = book_n[:t]
             author = book_n[t + 1:]
-        c.execute('''SELECT book_name FROM books WHERE user_id=?''', (user_id,))
-        b = c.fetchall()
+        b = select_book_name(user_id)
         book_list = []
         for i in b:
             book_list += list(i)
         if book_name in book_list:
             await message.edit_text('Такая книга уже записана.')
         else:
-            c.execute('''INSERT INTO books VALUES (?,?,?,?)''', (user_id, author, book_name, user_date))
-            conn.commit()
+            insert_book(user_id, author, book_name, user_date)
             await message.answer('Книга записана!')
     await state.finish()
 
@@ -708,8 +674,7 @@ async def delete_book(message: types.Message, state: FSMContext):
         num = num.replace(' ', '')
         new_num = num.split(',')
         list_num = []
-        c.execute('''SELECT book_name FROM books WHERE user_id=?''', (user_id,))
-        books = c.fetchall()
+        books = select_book_name(user_id)
         len_b = len(books)
         for i in new_num:
             if i.isdigit() and int(i) <= len_b:
@@ -720,8 +685,7 @@ async def delete_book(message: types.Message, state: FSMContext):
         else:
             for k in list_num:
                 key = books[k - 1]
-                c.execute('''DELETE FROM books WHERE book_name=?''', key)
-                conn.commit()
+                delete_book_db(key)
             await message.reply('Успешно удалено!')
     await state.finish()
 
